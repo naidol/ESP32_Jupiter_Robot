@@ -7,6 +7,7 @@
 #include <rclc/executor.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/int32_multi_array.h>
+#include <std_msgs/msg/string.h>
 
 // BNO055 IMU
 //#include <Adafruit_Sensor.h>
@@ -46,8 +47,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define MOTOR4_ENC_A  4
 #define MOTOR4_ENC_B  15 
 
-// Define Onboard LED
+// Define Onboard LED and subscriber to receive led commands from host PC
 #define LED 2
+std_msgs__msg__String led_msg;
+rcl_subscription_t esp_led_subscriber;
 
 // IMU objects and variables
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
@@ -322,6 +325,19 @@ void cmd_vel_callback(const void *msgin) {
     }
 }
 
+void esp_led_callback(const void *msgin) {
+    const std_msgs__msg__String *msg = (const std_msgs__msg__String *)msgin;
+
+    // Flash the on-board LED if any motor is moving
+    if (strcmp(msg->data.data, "listen") == 0) {
+        digitalWrite(LED, HIGH);
+    } 
+    else {
+        digitalWrite(LED, LOW);
+    }
+
+}
+
 void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
@@ -345,19 +361,26 @@ void setup() {
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
         "imu/data");
 
-    // Create encoder publisher
+    // Create Encoder publisher
     rclc_publisher_init_default(
         &encoder_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
         "wheel_encoders");
 
-    // Create subscriber
+    // Create cmd_vel subscriber
     rclc_subscription_init_default(
         &cmd_vel_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         "cmd_vel");
+    
+    // Create esp_led subscriber
+    rclc_subscription_init_default(
+        &esp_led_subscriber,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+        "esp_led");
 
     // Initialize encoder message
     encoder_msg.data.size = 4;
@@ -375,6 +398,7 @@ void setup() {
     rclc_executor_init(&executor, &support.context, 2, &allocator);
     rclc_executor_add_timer(&executor, &timer);
     rclc_executor_add_subscription(&executor, &cmd_vel_subscriber, &cmd_vel_msg, &cmd_vel_callback, ON_NEW_DATA);
+    rclc_executor_add_subscription(&executor, &esp_led_subscriber, &led_msg, &esp_led_callback, ON_NEW_DATA);
 
     // Set up motors and encoders and IMU
     setup_motors();
