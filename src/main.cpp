@@ -13,7 +13,6 @@
 //#include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <Adafruit_BusIO_Register.h>
-//#include <geometry_msgs/msg/vector3.h>
 #include <sensor_msgs/msg/imu.h>
 #include <utility/imumaths.h>
 
@@ -49,6 +48,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Define Onboard LED and subscriber to receive led commands from host PC
 #define LED 2
+#define STRING_LEN 20
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int) temp_rc); return 1; }}
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int) temp_rc); }}
+
 std_msgs__msg__String led_msg;
 rcl_subscription_t esp_led_subscriber;
 
@@ -325,17 +328,30 @@ void cmd_vel_callback(const void *msgin) {
     }
 }
 
-void esp_led_callback(const void *msgin) {
-    const std_msgs__msg__String *msg = (const std_msgs__msg__String *)msgin;
+void esp_led_callback(const void * msgin) {
+    const std_msgs__msg__String * msg = (const std_msgs__msg__String *)msgin;
 
-    // Flash the on-board LED if any motor is moving
+    // digitalWrite(LED, HIGH);
+    // delay (100);
+    // digitalWrite(LED, LOW);
+    // delay (100);
+    // digitalWrite(LED, HIGH);
+    // delay (100);
+    // digitalWrite(LED, LOW);
+    // delay (100);
+    // digitalWrite(LED, HIGH);
+    // delay (100);
+    // digitalWrite(LED, LOW);
+    // delay (100);
+
+
+    // Flash the on-board ESP32 LED when Jupiter is listening 
     if (strcmp(msg->data.data, "listen") == 0) {
         digitalWrite(LED, HIGH);
     } 
     else {
         digitalWrite(LED, LOW);
     }
-
 }
 
 void setup() {
@@ -395,10 +411,16 @@ void setup() {
         timer_callback);
 
     // Create executor
-    rclc_executor_init(&executor, &support.context, 2, &allocator);
+    rclc_executor_init(&executor, &support.context, 3, &allocator);
     rclc_executor_add_timer(&executor, &timer);
     rclc_executor_add_subscription(&executor, &cmd_vel_subscriber, &cmd_vel_msg, &cmd_vel_callback, ON_NEW_DATA);
     rclc_executor_add_subscription(&executor, &esp_led_subscriber, &led_msg, &esp_led_callback, ON_NEW_DATA);
+
+    // Initialize esp_led_subscriber message memory.
+    char string_memory[STRING_LEN];
+    led_msg.data.data = &string_memory[0];
+    led_msg.data.size = 0;
+    led_msg.data.capacity = STRING_LEN;
 
     // Set up motors and encoders and IMU
     setup_motors();
@@ -409,6 +431,7 @@ void setup() {
     // Set up LED pin
     pinMode(LED, OUTPUT);
     digitalWrite(LED, LOW);
+    
 }
 
 void loop() {
