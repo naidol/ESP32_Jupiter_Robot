@@ -1,366 +1,134 @@
-#include <Arduino.h>                            // needed if using Platformio and VS Code IDE
-#include <micro_ros_platformio.h>               // use if using platformio, otherwise #include <miro_ros_arduino.h>
-#include <Wire.h>
+#include <Arduino.h>
+#include <micro_ros_platformio.h>
 #include <esp32-hal-ledc.h>
+#include <stdio.h>               
+#include <Wire.h>
+
+#include "encoder.h"
+#include "odometry.h"
+#include "pid_controller.h"
+#include "kinematics.h"
+#include "bno_imu.h"
+#include "oled_display.h"
+
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <geometry_msgs/msg/twist.h>
-#include <std_msgs/msg/int32_multi_array.h>
-#include <std_msgs/msg/string.h>
+#include <nav_msgs/msg/odometry.h>
 
-// BNO055 IMU
-//#include <Adafruit_Sensor.h>
-#include <Adafruit_BNO055.h>
-#include <Adafruit_BusIO_Register.h>
-#include <sensor_msgs/msg/imu.h>
-#include <utility/imumaths.h>
+// Motor pin definitions
+#define MOTOR_FL_PWM  32  // Front-left motor PWM pin
+#define MOTOR_FR_PWM  33  // Front-right motor PWM pin
+#define MOTOR_BL_PWM  25  // Back-left motor PWM pin
+#define MOTOR_BR_PWM  26  // Back-right motor PWM pin
 
-// OLED display settings
-#include <Adafruit_SSD1306.h>
-#include <std_msgs/msg/float32_multi_array.h>
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET    -1
-#define SCREEN_ADDRESS 0x3C // Define the I2C address for your display
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+// Motor direction pin definitions
+#define MOTOR_FL_DIR  27
+#define MOTOR_FR_DIR  14
+#define MOTOR_BL_DIR  12
+#define MOTOR_BR_DIR  13
 
-// Motor Pins
-#define MOTOR1_PWM  32
-#define MOTOR1_DIR  33
-#define MOTOR1_ENC_B  25
-#define MOTOR1_ENC_A  26
+// Motor control variables
+double setpoint_fl = 0.0, input_fl = 0.0, output_fl = 0.0;
+double setpoint_fr = 0.0, input_fr = 0.0, output_fr = 0.0;
+double setpoint_bl = 0.0, input_bl = 0.0, output_bl = 0.0;
+double setpoint_br = 0.0, input_br = 0.0, output_br = 0.0;
 
-#define MOTOR2_PWM  23 //19
-#define MOTOR2_DIR  19 //23
-#define MOTOR2_ENC_A  18
-#define MOTOR2_ENC_B  5
+PIDController pid_fl(&input_fl, &output_fl, &setpoint_fl, 1.0, 0.1, 0.01, AUTOMATIC);
+PIDController pid_fr(&input_fr, &output_fr, &setpoint_fr, 1.0, 0.1, 0.01, AUTOMATIC);
+PIDController pid_bl(&input_bl, &output_bl, &setpoint_bl, 1.0, 0.1, 0.01, AUTOMATIC);
+PIDController pid_br(&input_br, &output_br, &setpoint_br, 1.0, 0.1, 0.01, AUTOMATIC);
 
-#define MOTOR3_PWM  27
-#define MOTOR3_DIR  14
-#define MOTOR3_ENC_B  12
-#define MOTOR3_ENC_A  13
-
-#define MOTOR4_PWM  17 //16
-#define MOTOR4_DIR  16 //17
-#define MOTOR4_ENC_A  4
-#define MOTOR4_ENC_B  15 
-
-// Define Onboard LED and subscriber to receive led commands from host PC
-#define LED 2
-#define STRING_LEN 20
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ printf("Failed status on line %d: %d. Aborting.\n", __LINE__, (int) temp_rc); return 1; }}
-#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ printf("Failed status on line %d: %d. Continuing.\n", __LINE__, (int) temp_rc); }}
-
-std_msgs__msg__String led_msg;
-rcl_subscription_t esp_led_subscriber;
-
-// IMU objects and variables
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
-rcl_publisher_t imu_publisher;
-//geometry_msgs__msg__Vector3 imu_msg;
-sensor_msgs__msg__Imu imu_msg;
-
-
-void setup_imu() {
-    // Initialize I2C communication
-    Wire.begin(21, 22);
-
-    // Initialize the BNO055 sensor
-    if (!bno.begin()) {
-        Serial.println("No BNO055 detected. Check your wiring or I2C ADDR!");
-        while (1);
-    }
-
-    // Set up the BNO055 sensor
-    bno.setExtCrystalUse(true);
-
-    imu_msg.orientation_covariance[0] = -1; // Indicates orientation covariance is not provided
-    imu_msg.angular_velocity_covariance[0] = -1; // Indicates angular velocity covariance is not provided
-    imu_msg.linear_acceleration_covariance[0] = -1; // Indicates linear acceleration covariance is not provided
-}
-
-void setup_oled_display() {
-    // Initialize OLED display
-    if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-        Serial.println(F("SSD1306 allocation failed"));
-        for (;;);
-    }
-    display.display();
-    delay(2000);
-    display.clearDisplay();
-    display.display();
-}
-
-// Wheel encoder variables
-volatile int32_t wheel1_count = 0;
-volatile int32_t wheel2_count = 0;
-volatile int32_t wheel3_count = 0;
-volatile int32_t wheel4_count = 0;
-
-// Motor speed and direction
-int motor1_speed = 0;
-int motor2_speed = 0;
-int motor3_speed = 0;
-int motor4_speed = 0;
-
-// Declare the encoder publisher oject and message array
-rcl_publisher_t encoder_publisher;
-std_msgs__msg__Int32MultiArray encoder_msg;
-
-// Declare the cmd_vel subscriber and twist message variable
-rcl_subscription_t cmd_vel_subscriber;
-geometry_msgs__msg__Twist cmd_vel_msg;
-
+// ROS2 and micro-ROS related variables
+rclc_executor_t executor;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
-rcl_timer_t timer;
-rclc_executor_t executor;
+rcl_publisher_t odom_publisher;
+rcl_subscription_t cmd_vel_subscriber;
+geometry_msgs__msg__Twist cmd_vel_msg;
 
-void setup_motors() {
-    delay(2000);
-    ledcAttachPin(MOTOR1_PWM, 0);
-    ledcAttachPin(MOTOR2_PWM, 1);
-    ledcAttachPin(MOTOR3_PWM, 2);
-    ledcAttachPin(MOTOR4_PWM, 3);
+// Function to handle incoming velocity commands
+void cmdVelCallback(const void * msg_in) {
+    const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msg_in;
 
-    ledcSetup(0, 5000, 8); // channel 0, 5kHz PWM, 8-bit resolution
-    ledcSetup(1, 5000, 8); // channel 1, 5kHz PWM, 8-bit resolution
-    ledcSetup(2, 5000, 8); // channel 2, 5kHz PWM, 8-bit resolution
-    ledcSetup(3, 5000, 8); // channel 3, 5kHz PWM, 8-bit resolution
+    double linear_x = msg->linear.x;
+    double angular_z = msg->angular.z;
 
-    pinMode(MOTOR1_DIR, OUTPUT);
-    pinMode(MOTOR2_DIR, OUTPUT);
-    pinMode(MOTOR3_DIR, OUTPUT);
-    pinMode(MOTOR4_DIR, OUTPUT);
-    
+    // Compute wheel velocities using kinematics
+    WheelVelocities wheel_vels = computeWheelVelocities(linear_x, angular_z);
+
+    // Setpoints for PID controllers based on computed wheel velocities
+    setpoint_fl = wheel_vels.front_left;
+    setpoint_fr = wheel_vels.front_right;
+    setpoint_bl = wheel_vels.back_left;
+    setpoint_br = wheel_vels.back_right;
 }
 
-void set_motor_speed(int motor, int speed) {
-    int pwm_value = abs(speed);
-    bool direction = (speed > 0); // speed >= 0
+// Function to drive the motors based on PID output
+void driveMotors(double output_fl, double output_fr, double output_bl, double output_br) {
+    // Drive front-left motor
+    digitalWrite(MOTOR_FL_DIR, output_fl >= 0 ? HIGH : LOW);
+    ledcWrite(0, abs(output_fl));
 
-    switch (motor) {
-        case 0:
-            digitalWrite(MOTOR1_DIR, direction);
-            ledcWrite(0, pwm_value);
-            motor1_speed = speed;
-            break;
-        case 1:
-            digitalWrite(MOTOR2_DIR, direction);
-            ledcWrite(1, pwm_value);
-            motor2_speed = speed;
-            break;
-        case 2:
-            digitalWrite(MOTOR3_DIR, direction);
-            ledcWrite(2, pwm_value);
-            motor3_speed = speed;
-            break;
-        case 3:
-            digitalWrite(MOTOR4_DIR, direction);
-            ledcWrite(3, pwm_value);
-            motor4_speed = speed;
-            break;
-    }
-}
+    // Drive front-right motor
+    digitalWrite(MOTOR_FR_DIR, output_fr >= 0 ? HIGH : LOW);
+    ledcWrite(1, abs(output_fr));
 
-void encoder_isr_1() {
-    if (motor1_speed >= 0) {
-        wheel1_count++;
-    } else {
-        wheel1_count--;
-    }
-}
+    // Drive back-left motor
+    digitalWrite(MOTOR_BL_DIR, output_bl >= 0 ? HIGH : LOW);
+    ledcWrite(2, abs(output_bl));
 
-void encoder_isr_2() {
-    if (motor2_speed >= 0) {
-        wheel2_count++;
-    } else {
-        wheel2_count--;
-    }
-}
-
-void encoder_isr_3() {
-    if (motor3_speed >= 0) {
-        wheel3_count++;
-    } else {
-        wheel3_count--;
-    }
-}
-
-void encoder_isr_4() {
-    if (motor4_speed >= 0) {
-        wheel4_count++;
-    } else {
-        wheel4_count--;
-    }
-}
-
-void setup_encoders() {
-    pinMode(MOTOR1_ENC_A, INPUT);
-    pinMode(MOTOR1_ENC_B, INPUT);
-    pinMode(MOTOR2_ENC_A, INPUT);
-    pinMode(MOTOR2_ENC_B, INPUT);
-    pinMode(MOTOR3_ENC_A, INPUT);
-    pinMode(MOTOR3_ENC_B, INPUT);
-    pinMode(MOTOR4_ENC_A, INPUT);
-    pinMode(MOTOR4_ENC_B, INPUT);
-
-    attachInterrupt(digitalPinToInterrupt(MOTOR1_ENC_A), encoder_isr_1, RISING);
-    attachInterrupt(digitalPinToInterrupt(MOTOR2_ENC_A), encoder_isr_2, RISING);
-    attachInterrupt(digitalPinToInterrupt(MOTOR3_ENC_A), encoder_isr_3, RISING);
-    attachInterrupt(digitalPinToInterrupt(MOTOR4_ENC_A), encoder_isr_4, RISING);
-}
-
-void timer_callback(rcl_timer_t *timer, int64_t last_call_time) {
-    RCLC_UNUSED(last_call_time);
-    
-    // Update encoder message
-    encoder_msg.data.data[0] = wheel1_count;
-    encoder_msg.data.data[1] = wheel2_count;
-    encoder_msg.data.data[2] = wheel3_count;
-    encoder_msg.data.data[3] = wheel4_count;
-
-    // Publish encoder data
-    rcl_ret_t ret_enc_ok = rcl_publish(&encoder_publisher, &encoder_msg, NULL);
-
-    // ***************  Read the BNO055 sensor data  ************************************
-    // Get the BNO055 calibration status
-    uint8_t system, gyro, accel, mag = 0;
-    bno.getCalibration(&system, &gyro, &accel, &mag);
-    // Read the 9DOF sensor data
-    sensors_event_t orientationData , angVelocityData , linearAccelData, magnetometerData, accelerometerData, gravityData;
-    bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
-    bno.getEvent(&angVelocityData, Adafruit_BNO055::VECTOR_GYROSCOPE);
-    bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
-    bno.getEvent(&magnetometerData, Adafruit_BNO055::VECTOR_MAGNETOMETER);
-    bno.getEvent(&accelerometerData, Adafruit_BNO055::VECTOR_ACCELEROMETER);
-    bno.getEvent(&gravityData, Adafruit_BNO055::VECTOR_GRAVITY);
-
-    /* Read the current temperature from BNO055 */
-    int8_t temp = bno.getTemp();
-
-    // Read the BNO055 Quaternion
-    imu::Quaternion quat = bno.getQuat();
-
-    // Fill the ROS2 message for IMU data
-    imu_msg.header.stamp.nanosec = (uint32_t)(millis() * 1e6);
-    imu_msg.header.stamp.sec = (uint32_t)(millis() / 1000);
-    imu_msg.header.frame_id.data = (char*)("imu_link");
-
-    imu_msg.orientation.x = quat.x();
-    imu_msg.orientation.y = quat.y();
-    imu_msg.orientation.z = quat.z();
-    imu_msg.orientation.w = quat.w(); 
-
-    imu_msg.angular_velocity.x = angVelocityData.gyro.x;
-    imu_msg.angular_velocity.y = angVelocityData.gyro.y;
-    imu_msg.angular_velocity.z = angVelocityData.gyro.z;
-
-    imu_msg.linear_acceleration.x = linearAccelData.acceleration.x;
-    imu_msg.linear_acceleration.y = linearAccelData.acceleration.y;
-    imu_msg.linear_acceleration.z = linearAccelData.acceleration.z;
-
-    // Publish the IMU message
-    rcl_ret_t ret_imu_ok = rcl_publish(&imu_publisher, &imu_msg, NULL);
-
-    // Display IMU data on OLED
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);
-    // display.println(); // print blank line
-    display.print("Temperature C: "); display.println(temp);
-    // display the IMU Orientation
-    // display.print("qW: "); display.println(quat.w(), 4);
-    // display.print("qX: "); display.println(quat.x(), 4);
-    // display.print("qY: "); display.println(quat.y(), 4);
-    // display.print("qZ: "); display.println(quat.z(), 4);
-    display.print("oX: "); display.print(orientationData.acceleration.heading, 1); display.print(" | ");
-    display.print("oY: "); display.println(orientationData.acceleration.pitch, 1);
-    display.print("oZ: "); display.println(orientationData.acceleration.roll, 1);
-    display.print("gX: "); display.print(gravityData.gyro.x, 1); display.print(" | ");
-    display.print("gY: "); display.println(gravityData.gyro.y, 1);
-    display.print("gZ: "); display.println(gravityData.gyro.z, 1);
-    // Display the calibration status (Sys | Gyro | Accel | Magno)
-    display.println();
-    display.print("C: S="); display.print(system); display.print("|"); 
-    display.print("G="); display.print(gyro); display.print("|");
-    display.print("A="); display.print(accel); display.print("|");
-    display.print("M="); display.println(mag);
-    // Populate the Oled Display
-    display.display();
-
-}
-
-void cmd_vel_callback(const void *msgin) {
-    const geometry_msgs__msg__Twist *msg = (const geometry_msgs__msg__Twist *)msgin;
-
-    // Constants for motor speed calculation
-    const float MAX_LINEAR_SPEED = 1.0; // m/s
-    const float MAX_ANGULAR_SPEED = 1.0; // rad/s
-    const int MAX_PWM = 255;
-
-    // Linear and angular speeds from the message
-    float linear_x = msg->linear.x;
-    float angular_z = msg->angular.z;
-
-    // Calculate motor speeds
-    int left_speed = (int)((linear_x - angular_z) * (MAX_PWM / MAX_LINEAR_SPEED));
-    int right_speed = (int)((linear_x + angular_z) * (MAX_PWM / MAX_LINEAR_SPEED));
-
-    // Ensure the speed is within the PWM limits
-    left_speed = constrain(left_speed, -MAX_PWM, MAX_PWM);
-    right_speed = constrain(right_speed, -MAX_PWM, MAX_PWM);
-
-    // Set motor speeds for all four motors
-    set_motor_speed(0, left_speed);  // Left front motor
-    set_motor_speed(1, right_speed); // Right front motor
-    set_motor_speed(2, left_speed);  // Left rear motor
-    set_motor_speed(3, right_speed); // Right rear motor
-
-    // Flash the on-board LED if any motor is moving
-    if (left_speed != 0 || right_speed != 0) {
-        digitalWrite(LED, HIGH);
-    } else {
-        digitalWrite(LED, LOW);
-    }
-}
-
-void esp_led_callback(const void * msgin) {
-    const std_msgs__msg__String * msg = (const std_msgs__msg__String *)msgin;
-
-    // digitalWrite(LED, HIGH);
-    // delay (100);
-    // digitalWrite(LED, LOW);
-    // delay (100);
-    // digitalWrite(LED, HIGH);
-    // delay (100);
-    // digitalWrite(LED, LOW);
-    // delay (100);
-    // digitalWrite(LED, HIGH);
-    // delay (100);
-    // digitalWrite(LED, LOW);
-    // delay (100);
-
-
-    // Flash the on-board ESP32 LED when Jupiter is listening 
-    if (strcmp(msg->data.data, "listen") == 0) {
-        digitalWrite(LED, HIGH);
-    } 
-    else {
-        digitalWrite(LED, LOW);
-    }
+    // Drive back-right motor
+    digitalWrite(MOTOR_BR_DIR, output_br >= 0 ? HIGH : LOW);
+    ledcWrite(3, abs(output_br));
 }
 
 void setup() {
-    // Initialize serial for debugging
+    // Initialize serial communication for debugging
     Serial.begin(115200);
 
-    // Set Micro-ROS transport
-    set_microros_serial_transports(Serial);
+    // Initialize encoders
+    initEncoders();
 
+    // Initialize motor control pins
+    pinMode(MOTOR_FL_DIR, OUTPUT);
+    pinMode(MOTOR_FR_DIR, OUTPUT);
+    pinMode(MOTOR_BL_DIR, OUTPUT);
+    pinMode(MOTOR_BR_DIR, OUTPUT);
+
+    // Setup PWM channels for motors
+    ledcSetup(0, 5000, 8);  // Channel 0, 5kHz frequency, 8-bit resolution
+    ledcAttachPin(MOTOR_FL_PWM, 0);
+    ledcSetup(1, 5000, 8);
+    ledcAttachPin(MOTOR_FR_PWM, 1);
+    ledcSetup(2, 5000, 8);
+    ledcAttachPin(MOTOR_BL_PWM, 2);
+    ledcSetup(3, 5000, 8);
+    ledcAttachPin(MOTOR_BR_PWM, 3);
+
+    // Initialize PID controllers
+    pid_fl.SetMode(AUTOMATIC);
+    pid_fr.SetMode(AUTOMATIC);
+    pid_bl.SetMode(AUTOMATIC);
+    pid_br.SetMode(AUTOMATIC);
+
+    // Initialize odometry
+    initOdometry();
+
+    // // Initialize ROS node
+    // rcl_allocator_t allocator = rcl_get_default_allocator();
+    // rclc_support_t support;
+    // rclc_support_init(&support, 0, NULL, &allocator);
+
+    // // Create ROS node
+    // rcl_node_t node;
+    // rclc_node_init_default(&node, "esp32_robot_node", "", &support);
+
+    // Initialize micro-ROS
+    // set_microros_transports();
+    set_microros_serial_transports(Serial);
     allocator = rcl_get_default_allocator();
 
     // Create init_options and support
@@ -369,72 +137,60 @@ void setup() {
     // Create node
     rclc_node_init_default(&node, "esp32_node", "", &support);
 
-
-    // Create IMU publisher
+    // Create odometry publisher
     rclc_publisher_init_default(
-        &imu_publisher,
+        &odom_publisher,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-        "imu/data");
-
-    // Create Encoder publisher
-    rclc_publisher_init_default(
-        &encoder_publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-        "wheel_encoders");
+        ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
+        "/odom");
 
     // Create cmd_vel subscriber
     rclc_subscription_init_default(
         &cmd_vel_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        "cmd_vel");
-    
-    // Create esp_led subscriber
-    rclc_subscription_init_default(
-        &esp_led_subscriber,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
-        "esp_led");
+        "/cmd_vel");
 
-    // Initialize encoder message
-    encoder_msg.data.size = 4;
-    encoder_msg.data.capacity = 4;
-    encoder_msg.data.data = (int32_t *)malloc(encoder_msg.data.capacity * sizeof(int32_t));
-
-    // Create timer
-    rclc_timer_init_default(
-        &timer,
-        &support,
-        RCL_MS_TO_NS(100), // Publish encoder data and IMU data every 100 ms
-        timer_callback);
-
-    // Create executor
-    rclc_executor_init(&executor, &support.context, 3, &allocator);
-    rclc_executor_add_timer(&executor, &timer);
-    rclc_executor_add_subscription(&executor, &cmd_vel_subscriber, &cmd_vel_msg, &cmd_vel_callback, ON_NEW_DATA);
-    rclc_executor_add_subscription(&executor, &esp_led_subscriber, &led_msg, &esp_led_callback, ON_NEW_DATA);
-
-    // Initialize esp_led_subscriber message memory.
-    char string_memory[STRING_LEN];
-    led_msg.data.data = &string_memory[0];
-    led_msg.data.size = 0;
-    led_msg.data.capacity = STRING_LEN;
-
-    // Set up motors and encoders and IMU
-    setup_motors();
-    setup_encoders();
-    setup_imu();
-    setup_oled_display();
-
-    // Set up LED pin
-    pinMode(LED, OUTPUT);
-    digitalWrite(LED, LOW);
-    
+    // Create executor to handle cmd_vel messages
+    rclc_executor_t executor;
+    rclc_executor_init(&executor, &support.context, 1, &allocator);
+    rclc_executor_add_subscription(&executor, &cmd_vel_subscriber, &cmd_vel_msg, &cmdVelCallback, ON_NEW_DATA);
 }
 
 void loop() {
+    // ROS executor spin
     rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
-    delay(10); // Small delay to prevent overwhelming the CPU
+
+    // Time management for PID and odometry update
+    static unsigned long lastTime = 0;
+    unsigned long currentTime = millis();
+    double dt = (currentTime - lastTime) / 1000.0;
+    lastTime = currentTime;
+
+    // Read encoder values
+    int32_t encoder_fl = readEncoderFL();
+    int32_t encoder_fr = readEncoderFR();
+    int32_t encoder_bl = readEncoderBL();
+    int32_t encoder_br = readEncoderBR();
+
+    // Update inputs for PID controllers
+    input_fl = encoder_fl / dt;
+    input_fr = encoder_fr / dt;
+    input_bl = encoder_bl / dt;
+    input_br = encoder_br / dt;
+
+    // Compute PID outputs
+    pid_fl.Compute();
+    pid_fr.Compute();
+    pid_bl.Compute();
+    pid_br.Compute();
+
+    // Drive motors based on PID output
+    driveMotors(output_fl, output_fr, output_bl, output_br);
+
+    // Update odometry using encoder readings
+    updateOdometry(encoder_fl, encoder_fr, encoder_bl, encoder_br, dt);
+
+    // Publish odometry
+    publishOdometry();
 }
