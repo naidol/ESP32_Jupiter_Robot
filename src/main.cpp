@@ -117,17 +117,7 @@ void setup() {
     // Initialize odometry
     initOdometry();
 
-    // // Initialize ROS node
-    // rcl_allocator_t allocator = rcl_get_default_allocator();
-    // rclc_support_t support;
-    // rclc_support_init(&support, 0, NULL, &allocator);
-
-    // // Create ROS node
-    // rcl_node_t node;
-    // rclc_node_init_default(&node, "esp32_robot_node", "", &support);
-
-    // Initialize micro-ROS
-    // set_microros_transports();
+    // Setup the micro-ROS link
     set_microros_serial_transports(Serial);
     allocator = rcl_get_default_allocator();
 
@@ -160,6 +150,7 @@ void setup() {
 void loop() {
     // ROS executor spin
     rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+    delay(50);
 
     // Time management for PID and odometry update
     static unsigned long lastTime = 0;
