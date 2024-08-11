@@ -1,13 +1,10 @@
-#ifndef BNO_IMU_H
-#define BNO_IMU_H
+#ifndef IMU_BNO_H
+#define IMU_BNO_H
 
 // BNO055 IMU
-//#include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
 #include <Adafruit_BusIO_Register.h>
 #include <Wire.h>
-#include <sensor_msgs/msg/imu.h>
-#include <utility/imumaths.h>
 
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 
@@ -26,4 +23,4 @@ void setup_imu() {
 
 }
 
-#endif // BNO_IMU_H
+#endif // IMU_BNO_H

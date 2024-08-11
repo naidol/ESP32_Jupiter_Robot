@@ -1,15 +1,5 @@
 #include "encoder.h"
 
-// Assume encoders are attached to interrupt pins
-// #define ENCODER_FL_PIN_A 34
-// #define ENCODER_FL_PIN_B 35
-// #define ENCODER_FR_PIN_A 36
-// #define ENCODER_FR_PIN_B 39
-// #define ENCODER_BL_PIN_A 32
-// #define ENCODER_BL_PIN_B 33
-// #define ENCODER_BR_PIN_A 25
-// #define ENCODER_BR_PIN_B 26
-
 volatile int32_t encoder_count_fl = 0;
 volatile int32_t encoder_count_fr = 0;
 volatile int32_t encoder_count_bl = 0;

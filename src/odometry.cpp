@@ -43,5 +43,5 @@ void publishOdometry() {
     odom_msg.pose.pose.orientation.w = cos(theta / 2.0);
 
     // Publish the odometry message
-    rcl_publish(&odom_publisher, &odom_msg, NULL);
+    rcl_ret_t ret_odom_ok = rcl_publish(&odom_publisher, &odom_msg, NULL);
 }

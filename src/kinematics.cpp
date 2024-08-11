@@ -14,16 +14,3 @@ WheelVelocities computeWheelVelocities(double linear_x, double angular_z) {
 
     return velocities;
 }
-
-
-// void calculateWheelVelocities(double linear_velocity, double angular_velocity,
-//                               double wheel_base, double wheel_radius,
-//                               double &setpoint_fl, double &setpoint_fr,
-//                               double &setpoint_bl, double &setpoint_br)
-// {
-//     setpoint_fl = (linear_velocity - angular_velocity * wheel_base / 2.0) / wheel_radius;
-//     setpoint_fr = (linear_velocity + angular_velocity * wheel_base / 2.0) / wheel_radius;
-//     setpoint_bl = (linear_velocity - angular_velocity * wheel_base / 2.0) / wheel_radius;
-//     setpoint_br = (linear_velocity + angular_velocity * wheel_base / 2.0) / wheel_radius;
-// }
-

@@ -4,40 +4,6 @@
 // AUTHOR:  Logan Naidoo, South Africa, 2024
 // ****************************************************************************************
 
-
-// Jupiter Robot ESP32 Pins Configuration
-//            Front
-// Motor #1  <-| |->   Motor #2
-// Motor #3  <-| |->   Motor #4
-//            Rear
-
-// Motor #1
-#define MOTOR1_PWM  32
-#define MOTOR1_DIR  33
-#define MOTOR1_ENC_B  25
-#define MOTOR1_ENC_A  26
-
-// Motor #2
-#define MOTOR2_PWM  23 //19
-#define MOTOR2_DIR  19 //23
-#define MOTOR2_ENC_A  18
-#define MOTOR2_ENC_B  5
-
-// Motor #3
-#define MOTOR3_PWM  27
-#define MOTOR3_DIR  14
-#define MOTOR3_ENC_B  12
-#define MOTOR3_ENC_A  13
-
-// Motor #4
-#define MOTOR4_PWM  17 //16
-#define MOTOR4_DIR  16 //17
-#define MOTOR4_ENC_A  4
-#define MOTOR4_ENC_B  15
-
-// Define the robot wheelbase type 
-#define WHEELBASE MECANUM 
-
 // PID Controller Settings
 #define K_P 0.6                             // P constant
 #define K_I 0.8                             // I constant
@@ -75,27 +41,35 @@
 #define LEDC_CHANNEL_BR_FORWARD 6
 #define LEDC_CHANNEL_BR_BACKWARD 7
 
-// Constants for LEDC setup
+// Constants for LEDC PWM setup
 #define LEDC_TIMER_13_BIT  8 //13
 #define LEDC_BASE_FREQ     5000
 
-// Define motor pins for all four wheels
-#define MOTOR_FL_FORWARD 32
-#define MOTOR_FL_BACKWARD 33
-#define MOTOR_FR_FORWARD 23
-#define MOTOR_FR_BACKWARD 19
-#define MOTOR_BL_FORWARD 27
-#define MOTOR_BL_BACKWARD 14
-#define MOTOR_BR_FORWARD 17
-#define MOTOR_BR_BACKWARD 16
+// Define MOTOR & ENCODER pins for all four wheels
+// Jupiter Robot ESP32 Pins Configuration
+//                Front
+// Motor #1 FL  <-| |->  FR  Motor #2
+// Motor #3 FB  <-| |->  BR  Motor #4
+//                BACK
 
-// Define encoder pins
+// M1
+#define MOTOR_FL_FORWARD 32      
+#define MOTOR_FL_BACKWARD 33 
 #define ENCODER_FL_PIN_A 25
-#define ENCODER_FL_PIN_B 26
+#define ENCODER_FL_PIN_B 26   
+// M2
+#define MOTOR_FR_FORWARD 23         
+#define MOTOR_FR_BACKWARD 19  
 #define ENCODER_FR_PIN_A 18
 #define ENCODER_FR_PIN_B 5
+//M3
+#define MOTOR_BL_FORWARD 27
+#define MOTOR_BL_BACKWARD 14
 #define ENCODER_BL_PIN_A 12
 #define ENCODER_BL_PIN_B 13
+//M4
+#define MOTOR_BR_FORWARD 17
+#define MOTOR_BR_BACKWARD 16
 #define ENCODER_BR_PIN_A 4
 #define ENCODER_BR_PIN_B 15
 
